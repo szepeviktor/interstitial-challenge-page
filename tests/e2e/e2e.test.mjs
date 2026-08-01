@@ -60,7 +60,7 @@ before(async () => {
             HC_E2E_REDIS_PORT: String(redisPort),
             HC_E2E_RUN_ID: runId,
             HC_E2E_WORDPRESS_PATH: wordpress,
-            PHP_CLI_SERVER_WORKERS: '4',
+            PHP_CLI_SERVER_WORKERS: '2',
         },
         stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -79,6 +79,14 @@ before(async () => {
 after(async () => {
     await browser?.close();
 
+    const serverFailure = server !== undefined && serverHasExited()
+        ? new Error(
+            `PHP server exited unexpectedly with code ${String(server.exitCode)}`
+            + ` and signal ${String(server.signalCode)}.\nRecent PHP server output:\n`
+            + serverOutput.slice(-4_000),
+        )
+        : null;
+
     if (server?.pid !== undefined) {
         try {
             process.kill(-server.pid, 'SIGTERM');
@@ -90,6 +98,10 @@ after(async () => {
     }
 
     await clearRedisKeys();
+
+    if (serverFailure !== null) {
+        throw serverFailure;
+    }
 });
 
 test('ordinary and privacy-conscious document requests pass through', async () => {
@@ -822,8 +834,11 @@ function runNodeTestMutation(pattern, environment) {
 
 async function waitForServer() {
     for (let attempt = 0; attempt < 100; attempt += 1) {
-        if (server.exitCode !== null) {
-            throw new Error(`PHP server exited with ${server.exitCode}.\n${serverOutput}`);
+        if (serverHasExited()) {
+            throw new Error(
+                `PHP server exited with code ${String(server.exitCode)}`
+                + ` and signal ${String(server.signalCode)}.\n${serverOutput}`,
+            );
         }
 
         try {
@@ -838,6 +853,10 @@ async function waitForServer() {
     }
 
     throw new Error(`PHP server did not become ready.\n${serverOutput}`);
+}
+
+function serverHasExited() {
+    return server.exitCode !== null || server.signalCode !== null;
 }
 
 function freePort() {
