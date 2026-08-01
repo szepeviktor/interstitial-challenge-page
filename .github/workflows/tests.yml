@@ -46,12 +46,6 @@ jobs:
         env:
           fail-fast: true
 
-      - name: Verify the PHP executable
-        run: |
-          test -x /usr/bin/php
-          /usr/bin/php -r 'exit(PHP_MAJOR_VERSION . "." . PHP_MINOR_VERSION === "${{ matrix.php }}" ? 0 : 1);'
-          /usr/bin/php -r 'exit(extension_loaded("mysqli") && extension_loaded("redis") ? 0 : 1);'
-
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
@@ -59,7 +53,7 @@ jobs:
           cache: npm
 
       - name: Install PHP dependencies
-        run: /usr/bin/php "$(command -v composer)" install --prefer-dist --no-interaction --no-progress
+        run: composer install --prefer-dist --no-interaction --no-progress
 
       - name: Install Node.js dependencies
         run: npm ci
@@ -83,18 +77,18 @@ jobs:
       - name: Install WordPress
         run: |
           mkdir --parents "$RUNNER_TEMP/wordpress"
-          /usr/bin/php "$(command -v wp)" core download \
+          wp core download \
             --path="$RUNNER_TEMP/wordpress" \
             --version="${{ matrix.wordpress }}" \
             --force
-          /usr/bin/php "$(command -v wp)" config create \
+          wp config create \
             --path="$RUNNER_TEMP/wordpress" \
             --dbname=wordpress_e2e \
             --dbuser=root \
             --dbpass=root \
             --dbhost=127.0.0.1 \
             --skip-check
-          /usr/bin/php "$(command -v wp)" core install \
+          wp core install \
             --path="$RUNNER_TEMP/wordpress" \
             --url=http://127.0.0.1 \
             --title="Hashcash E2E" \
@@ -110,13 +104,13 @@ jobs:
           echo "PLAYWRIGHT_CHROME_PATH=$chrome_path" >> "$GITHUB_ENV"
 
       - name: Validate Composer metadata
-        run: /usr/bin/php "$(command -v composer)" validate --strict
+        run: composer validate --strict
 
       - name: Run PHP tests
-        run: /usr/bin/php tests/run.php
+        run: php tests/run.php
 
       - name: Run PHPStan
-        run: /usr/bin/php vendor/bin/phpstan analyse --no-progress --error-format=raw
+        run: php vendor/bin/phpstan analyse --no-progress --error-format=raw
 
       - name: Run end-to-end tests
         run: npm run test:e2e

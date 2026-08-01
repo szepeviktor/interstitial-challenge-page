@@ -160,7 +160,7 @@ composer analyse
 
 GitHub Actions runs the 10 supported combinations on Ubuntu 24.04:
 
-- PHP 8.1 and 8.5 through `/usr/bin/php`;
+- PHP 8.1 and 8.5 through the runtime selected by `setup-php`;
 - Node.js 22 and the pinned current release, 26.5.0;
 - WordPress 5.9.13, 6.9.5, and 7.0.2.
 
