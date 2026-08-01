@@ -1,0 +1,11 @@
+{
+    "name": "interstitial-challenge-page-e2e",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "test:e2e": "node --test --test-concurrency=1 tests/e2e/e2e.test.mjs"
+    },
+    "devDependencies": {
+        "playwright-core": "^1.60.0"
+    }
+}

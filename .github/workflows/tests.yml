@@ -1,0 +1,123 @@
+name: Tests
+
+on:
+  pull_request:
+  push:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: PHP ${{ matrix.php }} / Node ${{ matrix.node }} / WordPress ${{ matrix.wordpress }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    strategy:
+      fail-fast: false
+      matrix:
+        php:
+          - "8.1"
+          - "8.5"
+        node:
+          - "22"
+          - "26.5.0"
+        wordpress:
+          - "5.9.13"
+          - "6.9.5"
+          - "7.0.2"
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v6
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: mysqli, redis
+          tools: composer:v2, wp-cli
+          coverage: none
+        env:
+          fail-fast: true
+
+      - name: Verify the PHP executable
+        run: |
+          test -x /usr/bin/php
+          /usr/bin/php -r 'exit(PHP_MAJOR_VERSION . "." . PHP_MINOR_VERSION === "${{ matrix.php }}" ? 0 : 1);'
+          /usr/bin/php -r 'exit(extension_loaded("mysqli") && extension_loaded("redis") ? 0 : 1);'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Install PHP dependencies
+        run: /usr/bin/php "$(command -v composer)" install --prefer-dist --no-interaction --no-progress
+
+      - name: Install Node.js dependencies
+        run: npm ci
+
+      - name: Start MySQL and Redis
+        run: |
+          sudo systemctl start mysql.service
+          sudo apt-get update
+          sudo apt-get install --yes redis-server
+          sudo systemctl start redis-server.service
+          mysqladmin ping --host=127.0.0.1 --user=root --silent
+          redis-cli ping
+        env:
+          MYSQL_PWD: root
+
+      - name: Create the WordPress database
+        run: mysql --host=127.0.0.1 --user=root --execute="CREATE DATABASE wordpress_e2e CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+        env:
+          MYSQL_PWD: root
+
+      - name: Install WordPress
+        run: |
+          mkdir --parents "$RUNNER_TEMP/wordpress"
+          /usr/bin/php "$(command -v wp)" core download \
+            --path="$RUNNER_TEMP/wordpress" \
+            --version="${{ matrix.wordpress }}" \
+            --force
+          /usr/bin/php "$(command -v wp)" config create \
+            --path="$RUNNER_TEMP/wordpress" \
+            --dbname=wordpress_e2e \
+            --dbuser=root \
+            --dbpass=root \
+            --dbhost=127.0.0.1 \
+            --skip-check
+          /usr/bin/php "$(command -v wp)" core install \
+            --path="$RUNNER_TEMP/wordpress" \
+            --url=http://127.0.0.1 \
+            --title="Hashcash E2E" \
+            --admin_user=admin \
+            --admin_password=admin \
+            --admin_email=admin@example.test \
+            --skip-email
+
+      - name: Locate Google Chrome
+        run: |
+          chrome_path="$(command -v google-chrome)"
+          test -x "$chrome_path"
+          echo "PLAYWRIGHT_CHROME_PATH=$chrome_path" >> "$GITHUB_ENV"
+
+      - name: Validate Composer metadata
+        run: /usr/bin/php "$(command -v composer)" validate --strict
+
+      - name: Run PHP tests
+        run: /usr/bin/php tests/run.php
+
+      - name: Run PHPStan
+        run: /usr/bin/php vendor/bin/phpstan analyse --no-progress --error-format=raw
+
+      - name: Run end-to-end tests
+        run: npm run test:e2e
+        env:
+          HC_E2E_WORDPRESS_PATH: ${{ runner.temp }}/wordpress
+          HC_E2E_WP_USER: admin
+          HC_E2E_WP_PASSWORD: admin
+          HC_E2E_REDIS_HOST: 127.0.0.1
+          HC_E2E_REDIS_PORT: "6379"

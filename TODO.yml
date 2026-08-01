@@ -1,0 +1,10 @@
+---
+trusted bot: allow
+known user: allow
+zero score: a user
+low score: record request headers
+mid score: require Hashcash
+high score: block
+challenge_replayed: block
+
+in the MU: authed users should get hashcash clearence cookie
