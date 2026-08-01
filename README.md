@@ -158,11 +158,15 @@ Run PHPStan at level 5:
 composer analyse
 ```
 
-GitHub Actions runs 12 combinations on Ubuntu 24.04:
+GitHub Actions runs the 10 supported combinations on Ubuntu 24.04:
 
 - PHP 8.1 and 8.5 through `/usr/bin/php`;
 - Node.js 22 and the pinned current release, 26.5.0;
 - WordPress 5.9.13, 6.9.5, and 7.0.2.
+
+WordPress 5.9.13 with PHP 8.5 is excluded because WordPress 5.9 supports PHP
+only through 8.1. Both Node.js versions still run against every supported
+WordPress/PHP pair.
 
 The workflow installs an isolated WordPress fixture under the runner's
 temporary directory and starts MySQL and Redis directly on the host. It does

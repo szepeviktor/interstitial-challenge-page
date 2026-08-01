@@ -765,6 +765,7 @@ function runNodeTestMutation(pattern, environment) {
         const child = spawn(process.execPath, [
             '--test',
             '--test-concurrency=1',
+            '--test-reporter=tap',
             `--test-name-pattern=${pattern}`,
             join(repository, 'tests/e2e/e2e.test.mjs'),
         ], {

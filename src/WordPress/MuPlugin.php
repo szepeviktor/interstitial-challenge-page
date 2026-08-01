@@ -63,7 +63,8 @@ final class MuPlugin
             return;
         }
 
-        $this->setCookie('', time() - 3600, is_ssl());
+        $request = Request::fromGlobals($_SERVER, $_COOKIE, $_POST);
+        $this->setCookie('', time() - 3600, $request->scheme === 'https');
     }
 
     private function setCookie(string $value, int $expires, bool $secure): void

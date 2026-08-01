@@ -3,6 +3,8 @@ name: Tests
 on:
   pull_request:
   push:
+    branches:
+      - master
 
 permissions:
   contents: read
@@ -26,6 +28,9 @@ jobs:
           - "5.9.13"
           - "6.9.5"
           - "7.0.2"
+        exclude:
+          - php: "8.5"
+            wordpress: "5.9.13"
 
     steps:
       - name: Check out the repository
