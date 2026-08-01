@@ -13,6 +13,7 @@ import { RedisClient } from './redis-client.mjs';
 const repository = fileURLToPath(new URL('../..', import.meta.url));
 const wordpress = process.env.HC_E2E_WORDPRESS_PATH ?? '/home/viktor/chatgpt-is-super';
 const chrome = process.env.PLAYWRIGHT_CHROME_PATH ?? '/usr/bin/google-chrome';
+const phpBinary = process.env.HC_E2E_PHP_BINARY ?? '/usr/bin/php';
 const wordpressUser = process.env.HC_E2E_WP_USER ?? 'admin';
 const wordpressPassword = process.env.HC_E2E_WP_PASSWORD ?? 'admin';
 const redisHost = process.env.HC_E2E_REDIS_HOST ?? '127.0.0.1';
@@ -44,7 +45,7 @@ before(async () => {
     redis = new RedisClient({ host: redisHost, port: redisPort });
     assert.equal(await redis.command('PING'), 'PONG');
 
-    server = spawn('/usr/bin/php', [
+    server = spawn(phpBinary, [
         '-S',
         `127.0.0.1:${port}`,
         '-t',
@@ -642,15 +643,15 @@ test('WordPress login issues an auth assertion and logout removes it', async () 
         assert.ok(logoutUrl);
         await page.goto(logoutUrl, { waitUntil: 'domcontentloaded' });
 
-        cookies = await context.cookies();
-        assert.equal(cookies.some((cookie) => cookie.name === 'hc_wp_auth'), false);
-
         const protectedAfterLogout = await page.goto(
             '/wp-config.php.backup',
             { waitUntil: 'domcontentloaded' },
         );
         assert.equal(protectedAfterLogout?.status(), 429);
         assert.equal((await protectedAfterLogout?.allHeaders())?.['hc-mitigated'], 'challenge');
+
+        cookies = await context.cookies();
+        assert.equal(cookies.some((cookie) => cookie.name === 'hc_wp_auth'), false);
     } finally {
         await context.close();
     }

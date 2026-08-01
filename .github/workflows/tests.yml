@@ -115,6 +115,7 @@ jobs:
       - name: Run end-to-end tests
         run: npm run test:e2e
         env:
+          HC_E2E_PHP_BINARY: php
           HC_E2E_WORDPRESS_PATH: ${{ runner.temp }}/wordpress
           HC_E2E_WP_USER: admin
           HC_E2E_WP_PASSWORD: admin

@@ -86,8 +86,21 @@ final class EarlyGate
             return;
         }
 
-        if ($this->hasValidClearance($request, $now) || $this->hasValidAuthAssertion($request, $now)) {
+        if ($this->hasValidClearance($request, $now)) {
             return;
+        }
+
+        if ($this->hasValidAuthAssertion($request, $now)) {
+            return;
+        }
+
+        if (isset($request->cookies[$this->config->authCookie])) {
+            $this->setCookie(
+                name: $this->config->authCookie,
+                value: '',
+                expires: $now - 3600,
+                secure: $request->scheme === 'https',
+            );
         }
 
         $score = $this->scorer->score($request);
