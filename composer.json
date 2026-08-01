@@ -1,0 +1,24 @@
+{
+    "name": "szepeviktor/interstitial-challenge-page",
+    "description": "Early Hashcash request gate with optional WordPress integration.",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "php": ">=8.1",
+        "ext-mysqli": "*"
+    },
+    "require-dev": {
+        "phpstan/phpstan": "^2.1"
+    },
+    "suggest": {
+        "ext-redis": "Required when using RedisReplayStore."
+    },
+    "autoload": {
+        "psr-4": {
+            "SzepeViktor\\WordPress\\Waf\\": "src/"
+        }
+    },
+    "scripts": {
+        "analyse": "/usr/bin/php vendor/bin/phpstan analyse --no-progress --error-format=raw"
+    }
+}

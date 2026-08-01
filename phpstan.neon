@@ -1,0 +1,9 @@
+parameters:
+    level: 5
+    tmpDir: .phpstan-cache
+    paths:
+        - src
+        - examples
+        - tests
+    scanFiles:
+        - phpstan/wordpress-functions.php
