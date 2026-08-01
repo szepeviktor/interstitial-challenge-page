@@ -595,40 +595,52 @@ test('WordPress login issues an auth assertion and logout removes it', async () 
         assert.ok(wordpressCookies.length > 0);
         assert.ok(authAssertion);
 
-        const authOnlyContext = await browser.newContext({ baseURL: baseUrl });
-        const wordpressOnlyContext = await browser.newContext({ baseURL: baseUrl });
-        const tamperedContext = await browser.newContext({ baseURL: baseUrl });
+        await page.goto('about:blank', { waitUntil: 'commit' });
 
+        const probeContext = await browser.newContext({ baseURL: baseUrl });
         try {
-            await authOnlyContext.addCookies([authAssertion]);
-            await wordpressOnlyContext.addCookies(wordpressCookies);
-            await tamperedContext.addCookies([
-                ...wordpressCookies,
+            const probePage = await probeContext.newPage();
+            const probes = [
                 {
-                    ...authAssertion,
-                    value: mutateLastCharacter(authAssertion.value),
+                    name: 'auth assertion without a WordPress cookie',
+                    cookies: [authAssertion],
                 },
-            ]);
+                {
+                    name: 'WordPress cookie without an auth assertion',
+                    cookies: wordpressCookies,
+                },
+                {
+                    name: 'tampered auth assertion',
+                    cookies: [
+                        ...wordpressCookies,
+                        {
+                            ...authAssertion,
+                            value: mutateLastCharacter(authAssertion.value),
+                        },
+                    ],
+                },
+            ];
 
-            for (const attackContext of [
-                authOnlyContext,
-                wordpressOnlyContext,
-                tamperedContext,
-            ]) {
-                const attackPage = await attackContext.newPage();
-                const response = await attackPage.goto(
+            for (const probe of probes) {
+                await probeContext.clearCookies();
+                await probeContext.addCookies(probe.cookies);
+
+                const response = await gotoChromeProbe(
+                    probePage,
                     '/wp-config.php.backup',
-                    { waitUntil: 'domcontentloaded' },
+                    probe.name,
                 );
-                assert.equal(response?.status(), 429);
-                assert.equal((await response?.allHeaders())?.['hc-mitigated'], 'challenge');
+                assert.equal(response?.status(), 429, probe.name);
+                assert.equal(
+                    (await response?.allHeaders())?.['hc-mitigated'],
+                    'challenge',
+                    probe.name,
+                );
+
+                await probePage.goto('about:blank', { waitUntil: 'commit' });
             }
         } finally {
-            await Promise.all([
-                authOnlyContext.close(),
-                wordpressOnlyContext.close(),
-                tamperedContext.close(),
-            ]);
+            await probeContext.close();
         }
 
         const protectedWhileAuthenticated = await page.goto(
@@ -659,6 +671,20 @@ test('WordPress login issues an auth assertion and logout removes it', async () 
 
 function appendServerOutput(chunk) {
     serverOutput = (serverOutput + chunk.toString('utf8')).slice(-20_000);
+}
+
+async function gotoChromeProbe(page, path, scenario) {
+    try {
+        return await page.goto(path, {
+            waitUntil: 'commit',
+            timeout: 10_000,
+        });
+    } catch (error) {
+        throw new Error(
+            `Chrome probe failed for "${scenario}".\nRecent PHP server output:\n${serverOutput.slice(-4_000)}`,
+            { cause: error },
+        );
+    }
 }
 
 function assertChallenge(response, context = '') {
