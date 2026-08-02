@@ -21,6 +21,7 @@ final class EarlyGate
     private readonly ChallengeService $challengeService;
     private readonly ChallengeRenderer $renderer;
     private readonly RequestHeaderLogger $requestHeaderLogger;
+    private readonly RequestPolicy $requestPolicy;
 
     public function __construct(
         private readonly Config $config,
@@ -36,6 +37,7 @@ final class EarlyGate
         );
         $this->renderer = new ChallengeRenderer();
         $this->requestHeaderLogger = new RequestHeaderLogger($this->config->logPath);
+        $this->requestPolicy = new RequestPolicy($this->config->requiredClearancePaths);
     }
 
     public function run(): void
@@ -82,12 +84,17 @@ final class EarlyGate
             $this->sendChallenge($request, $now);
         }
 
-        if (!$this->isEligible($request)) {
+        $decision = $this->requestPolicy->decide($request);
+        if ($decision === RequestDecision::Bypass) {
             return;
         }
 
         if ($this->hasValidClearance($request, $now)) {
             return;
+        }
+
+        if ($decision === RequestDecision::RequireClearance) {
+            $this->sendChallenge($request, $now);
         }
 
         if ($this->hasValidAuthAssertion($request, $now)) {
@@ -122,28 +129,6 @@ final class EarlyGate
             $this->challengeService->create($request, $now),
             $request->target,
         );
-    }
-
-    private function isEligible(Request $request): bool
-    {
-        if (!$request->isHtmlDocumentNavigation()) {
-            return false;
-        }
-
-        if (
-            $request->path === '/wp-admin/admin-ajax.php'
-            || $request->path === '/wp-admin/admin-post.php'
-            || $request->path === '/wp-cron.php'
-            || $request->path === '/xmlrpc.php'
-            || $request->path === '/robots.txt'
-            || $request->path === '/favicon.ico'
-            || $request->path === '/wp-sitemap.xml'
-            || str_starts_with($request->path, '/wp-json/')
-        ) {
-            return false;
-        }
-
-        return true;
     }
 
     private function isChallengeSubmission(Request $request): bool

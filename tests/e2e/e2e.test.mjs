@@ -185,21 +185,76 @@ test('non-document and excluded WordPress requests bypass scoring', async () => 
     assertNotChallenge(excluded);
 });
 
+test('checkout and WordPress login require a completed challenge', async () => {
+    for (const path of [
+        '/checkout',
+        '/checkout/',
+        '/wp-login.php?redirect_to=%2Fwp-admin%2F',
+        '/wp-login.php?wc-ajax=checkout',
+    ]) {
+        const response = await client.request({ path, headers: browserHeaders });
+        assertChallenge(response, path);
+        assert.match(response.text, /quick check helps protect the site/u);
+        assert.doesNotMatch(response.text, /<button/u);
+    }
+
+    const directLogin = await client.request({
+        method: 'POST',
+        path: '/wp-login.php',
+        headers: {
+            ...browserHeaders,
+            'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: formBody({ log: wordpressUser, pwd: wordpressPassword }),
+    });
+    assertChallenge(directLogin, 'direct WordPress login POST');
+
+    const similarlyNamed = await client.request({
+        path: '/checkout-later',
+        headers: browserHeaders,
+    });
+    assertNotChallenge(similarlyNamed);
+
+    const wcAjax = await client.request({
+        path: '/checkout?wc-ajax=checkout',
+        headers: browserHeaders,
+    });
+    assertNotChallenge(wcAjax);
+
+    const target = '/checkout?coupon=welcome';
+    const challenged = await client.request({ path: target, headers: browserHeaders });
+    const submission = await submitStamp(target, solveChallenge(parseChallenge(challenged.text)));
+    assertClearanceRedirect(submission, target);
+
+    const clearance = firstCookie(submission, 'hc_clearance');
+    const clearedCheckout = await client.request({
+        path: target,
+        headers: { ...browserHeaders, Cookie: clearance },
+    });
+    assertNotChallenge(clearedCheckout);
+
+    const clearedLogin = await client.request({
+        path: '/wp-login.php',
+        headers: { ...browserHeaders, Cookie: clearance },
+    });
+    assert.equal(clearedLogin.status, 200);
+    assert.match(clearedLogin.text, /id=["']user_login["']/u);
+});
+
 test('gate failures fail open only when explicitly configured', async () => {
     const failureHeaders = {
         ...browserHeaders,
         'X-HC-E2E-Gate-Failure': '1',
     };
     const failClosed = await client.request({
-        path: '/wp-login.php',
+        path: '/',
         headers: failureHeaders,
     });
 
     assert.equal(failClosed.status, 500);
-    assert.doesNotMatch(failClosed.text, /id=["']user_login["']/u);
 
     const failOpen = await client.request({
-        path: '/wp-login.php',
+        path: '/',
         headers: {
             ...failureHeaders,
             'X-HC-E2E-Fail-Open': '1',
@@ -207,14 +262,14 @@ test('gate failures fail open only when explicitly configured', async () => {
     });
 
     assert.equal(failOpen.status, 200);
-    assert.match(failOpen.text, /id=["']user_login["']/u);
+    assert.equal(header(failOpen, 'hc-mitigated'), '');
 
     const recovered = await client.request({
-        path: '/wp-login.php',
+        path: '/',
         headers: browserHeaders,
     });
     assert.equal(recovered.status, 200);
-    assert.match(recovered.text, /id=["']user_login["']/u);
+    assert.equal(header(recovered, 'hc-mitigated'), '');
 });
 
 test('HTTP challenge candidates receive 403 without the mitigation header', async () => {
@@ -529,8 +584,14 @@ test('hostile request targets cannot inject markup, script, headers, or external
     const page = await context.newPage();
 
     try {
+        await page.addInitScript(() => {
+            HTMLFormElement.prototype.submit = function submit() {
+                globalThis.__hashcashSubmitted = true;
+            };
+        });
         const response = await page.goto(target + fragment, { waitUntil: 'domcontentloaded' });
         assert.equal(response?.status(), 429);
+        await page.waitForFunction(() => globalThis.__hashcashSubmitted === true);
         assert.equal(await page.locator('#hc').getAttribute('action'), target);
         assert.equal(
             await page.evaluate(() => globalThis.__hashcashInjected),
@@ -559,14 +620,17 @@ test('installed Chrome solves the JavaScript challenge and retains clearance', a
     const page = await context.newPage();
 
     try {
-        const challenged = await page.goto('/browser-proof', { waitUntil: 'domcontentloaded' });
-        assert.equal(challenged?.status(), 429);
-        assert.equal((await challenged?.allHeaders())?.['hc-mitigated'], 'challenge');
-
+        const challengedPromise = page.waitForResponse(
+            (response) => response.url().includes('/browser-proof') && response.status() === 429,
+        );
         const redirect = page.waitForResponse(
             (response) => response.url().includes('/browser-proof') && response.status() === 303,
         );
-        await page.locator('#hc_btn').click();
+        const challenged = await page.goto('/browser-proof', { waitUntil: 'domcontentloaded' });
+        const challengedResponse = await challengedPromise;
+        assert.equal(challengedResponse.status(), 429);
+        assert.equal((await challengedResponse.allHeaders())['hc-mitigated'], 'challenge');
+        assert.ok(challenged === null || challenged.status() === 429);
         await redirect;
         await page.waitForLoadState('domcontentloaded');
 
@@ -584,13 +648,98 @@ test('installed Chrome solves the JavaScript challenge and retains clearance', a
     }
 }, { timeout: 30_000 });
 
+test('a failed WordPress login shows its error after a fresh challenge', async () => {
+    const context = await browser.newContext({ baseURL: baseUrl });
+    const page = await context.newPage();
+
+    try {
+        const challengedPromise = page.waitForResponse(
+            (response) => response.url().includes('/wp-login.php') && response.status() === 429,
+        );
+        const clearanceRedirect = page.waitForResponse(
+            (response) => response.url().includes('/wp-login.php') && response.status() === 303,
+        );
+        await page.goto('/wp-login.php', { waitUntil: 'domcontentloaded' });
+        await challengedPromise;
+        await clearanceRedirect;
+        await page.waitForLoadState('domcontentloaded');
+
+        assert.ok(
+            (await context.cookies()).some((cookie) => cookie.name === 'hc_clearance'),
+        );
+
+        await page.locator('#user_login').fill(wordpressUser);
+        await page.locator('#user_pass').fill('deliberately-incorrect-e2e-password');
+        const failedLoginRedirectPromise = page.waitForResponse(
+            (response) => response.url().includes('/wp-login.php')
+                && response.request().method() === 'POST'
+                && response.status() === 303,
+        );
+        const rechallengedPromise = page.waitForResponse(
+            (response) => response.url().includes('/wp-login.php') && response.status() === 429,
+        );
+        const challengeSubmissionPromise = page.waitForResponse(
+            (response) => response.url().includes('/wp-login.php')
+                && response.request().method() === 'POST'
+                && response.request().postData()?.includes('hc_challenge=1') === true
+                && response.status() === 303,
+        );
+        await page.locator('#wp-submit').click();
+
+        const failedLoginRedirect = await failedLoginRedirectPromise;
+        const rechallenged = await rechallengedPromise;
+        await challengeSubmissionPromise;
+        await page.waitForLoadState('domcontentloaded');
+
+        const failedLoginHeaders = await failedLoginRedirect.allHeaders();
+        const failedLoginLocation = new URL(failedLoginHeaders.location, baseUrl);
+        assert.equal(failedLoginLocation.pathname, '/wp-login.php');
+        assert.equal(failedLoginLocation.searchParams.has('hc_login_failed'), false);
+        assert.match(
+            failedLoginHeaders['set-cookie'],
+            /hc_clearance=(?:deleted)?;.*(?:expires=|max-age=0)/iu,
+        );
+        assert.match(failedLoginHeaders['set-cookie'], /hc_login_error=/u);
+        assert.equal((await rechallenged.allHeaders())['hc-mitigated'], 'challenge');
+        await page.locator('#login_error').waitFor();
+        assert.match(
+            await page.locator('#login_error').innerText(),
+            new RegExp(
+                `The password you entered for the username ${wordpressUser} is incorrect\\.`,
+                'u',
+            ),
+        );
+
+        const cookies = await context.cookies();
+        assert.equal(cookies.some((cookie) => cookie.name === 'hc_clearance'), true);
+        assert.equal(cookies.some((cookie) => cookie.name === 'hc_login_error'), false);
+        assert.equal(
+            cookies.some((cookie) => cookie.name.startsWith('wordpress_logged_in_')),
+            false,
+        );
+        assert.equal(cookies.some((cookie) => cookie.name === 'hc_wp_auth'), false);
+    } finally {
+        await context.close();
+    }
+}, { timeout: 30_000 });
+
 test('WordPress login issues an auth assertion and logout removes it', async () => {
     const context = await browser.newContext({ baseURL: baseUrl });
     const page = await context.newPage();
 
     try {
+        const challengedPromise = page.waitForResponse(
+            (response) => response.url().includes('/wp-login.php') && response.status() === 429,
+        );
+        const clearanceRedirect = page.waitForResponse(
+            (response) => response.url().includes('/wp-login.php') && response.status() === 303,
+        );
         const login = await page.goto('/wp-login.php', { waitUntil: 'domcontentloaded' });
-        assert.notEqual(login?.status(), 429);
+        const challenged = await challengedPromise;
+        assert.equal(challenged.status(), 429);
+        assert.ok(login === null || login.status() === 429);
+        await clearanceRedirect;
+        await page.waitForLoadState('domcontentloaded');
 
         await page.locator('#user_login').fill(wordpressUser);
         await page.locator('#user_pass').fill(wordpressPassword);
@@ -606,6 +755,7 @@ test('WordPress login issues an auth assertion and logout removes it', async () 
         const authAssertion = cookies.find((cookie) => cookie.name === 'hc_wp_auth');
         assert.ok(wordpressCookies.length > 0);
         assert.ok(authAssertion);
+        assert.ok(cookies.some((cookie) => cookie.name === 'hc_clearance'));
 
         await page.goto('about:blank', { waitUntil: 'commit' });
 
@@ -651,6 +801,16 @@ test('WordPress login issues an auth assertion and logout removes it', async () 
 
                 await probePage.goto('about:blank', { waitUntil: 'commit' });
             }
+
+            await probeContext.clearCookies();
+            await probeContext.addCookies([...wordpressCookies, authAssertion]);
+            const mandatory = await gotoChromeProbe(
+                probePage,
+                '/checkout',
+                'authenticated session without challenge clearance',
+            );
+            assert.equal(mandatory?.status(), 429);
+            assert.equal((await mandatory?.allHeaders())?.['hc-mitigated'], 'challenge');
         } finally {
             await probeContext.close();
         }
@@ -667,6 +827,7 @@ test('WordPress login issues an auth assertion and logout removes it', async () 
         assert.ok(logoutUrl);
         await page.goto(logoutUrl, { waitUntil: 'domcontentloaded' });
 
+        await context.clearCookies({ name: 'hc_clearance' });
         const protectedAfterLogout = await page.goto(
             '/wp-config.php.backup',
             { waitUntil: 'domcontentloaded' },
@@ -700,10 +861,16 @@ async function gotoChromeProbe(page, path, scenario) {
 }
 
 function assertChallenge(response, context = '') {
-    assert.equal(response.status, 429, context);
-    assert.equal(header(response, 'hc-mitigated'), 'challenge', context);
-    assert.match(response.text, /id="hc_btn"/u, context);
-    assertUncacheableHtml(response, context);
+    const diagnostics = [
+        context,
+        `Response body:\n${response.text.slice(-2_000)}`,
+        `Recent PHP server output:\n${serverOutput.slice(-4_000)}`,
+    ].filter(Boolean).join('\n');
+
+    assert.equal(response.status, 429, diagnostics);
+    assert.equal(header(response, 'hc-mitigated'), 'challenge', diagnostics);
+    assert.match(response.text, /id="hc_status"/u, diagnostics);
+    assertUncacheableHtml(response, diagnostics);
 }
 
 function assertNotChallenge(response) {
