@@ -4,3 +4,4 @@
 /.phpstan-cache/
 /node_modules/
 /test-results/
+/benchmarks/

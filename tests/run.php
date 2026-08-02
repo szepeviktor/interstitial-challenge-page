@@ -8,6 +8,8 @@ use SzepeViktor\WordPress\Waf\Replay\NullReplayStore;
 use SzepeViktor\WordPress\Waf\Replay\RedisReplayStore;
 use SzepeViktor\WordPress\Waf\Replay\ReplayStore;
 use SzepeViktor\WordPress\Waf\Request;
+use SzepeViktor\WordPress\Waf\RequestDecision;
+use SzepeViktor\WordPress\Waf\RequestPolicy;
 use SzepeViktor\WordPress\Waf\Scoring\DefaultScorer;
 use SzepeViktor\WordPress\Waf\Security\TokenService;
 
@@ -27,7 +29,7 @@ $now = time();
 $config = new Config(
     secret: str_repeat('s', 32),
     bits: 8,
-    challengeTtl: 300,
+    challengeTtl: 30,
 );
 $request = Request::fromGlobals(
     [
@@ -48,6 +50,7 @@ $request = Request::fromGlobals(
 );
 $tokens = new TokenService($config->secret);
 $defaultScorer = new DefaultScorer();
+$requestPolicy = new RequestPolicy($config->requiredClearancePaths);
 
 $languageRequest = static function (string $acceptLanguage) use ($request): Request {
     return new Request(
@@ -156,9 +159,97 @@ assertSameValue(
     'double-encoded path traversal score',
 );
 
+$requestFor = static function (
+    string $path,
+    string $method = 'GET',
+    array $headers = [],
+) use ($request): Request {
+    return new Request(
+        method: $method,
+        scheme: $request->scheme,
+        host: $request->host,
+        target: $path,
+        path: parse_url($path, PHP_URL_PATH) ?: '/',
+        headers: array_merge($request->headers, $headers),
+        cookies: $request->cookies,
+        post: $request->post,
+    );
+};
+
+assertSameValue(
+    RequestDecision::RequireClearance,
+    $requestPolicy->decide($requestFor('/checkout')),
+    'checkout requires clearance',
+);
+assertSameValue(
+    RequestDecision::RequireClearance,
+    $requestPolicy->decide($requestFor('/checkout/?coupon=welcome')),
+    'checkout query requires clearance',
+);
+assertSameValue(
+    RequestDecision::RequireClearance,
+    $requestPolicy->decide($requestFor('/wp-login.php?action=lostpassword')),
+    'WordPress login navigation requires clearance',
+);
+assertSameValue(
+    RequestDecision::RequireClearance,
+    $requestPolicy->decide($requestFor('/wp-login.php?wc-ajax=checkout')),
+    'WooCommerce AJAX query cannot bypass WordPress login clearance',
+);
+assertSameValue(
+    RequestDecision::RequireClearance,
+    $requestPolicy->decide($requestFor(
+        '/wp-login.php',
+        'POST',
+        ['content-type' => 'application/x-www-form-urlencoded'],
+    )),
+    'WordPress login submission requires clearance',
+);
+assertSameValue(
+    RequestDecision::Normal,
+    $requestPolicy->decide($requestFor('/checkout-later')),
+    'required paths use exact matching',
+);
+assertSameValue(
+    RequestDecision::Normal,
+    $requestPolicy->decide($requestFor('/checkout?wc-ajax=checkout')),
+    'WooCommerce AJAX bypasses mandatory clearance policy',
+);
+assertSameValue(
+    RequestDecision::Bypass,
+    $requestPolicy->decide($requestFor(
+        '/wp-json/wc/store/v1/checkout',
+        'POST',
+        ['accept' => 'application/json'],
+    )),
+    'WooCommerce Store API bypasses the page policy',
+);
+
 $clearance = $tokens->issueClearance($request->host, $now + 900);
 assertSameValue(true, $tokens->validateClearance($clearance, $request->host, $now, 900), 'clearance');
 assertSameValue(false, $tokens->validateClearance($clearance . 'x', $request->host, $now, 900), 'tampered clearance');
+
+$loginErrors = [
+    'incorrect_password' => [
+        '<strong>Error:</strong> The password entered for this account is incorrect.',
+    ],
+];
+$loginErrorToken = $tokens->issueLoginError($request->host, $loginErrors, $now + 30);
+assertSameValue(
+    $loginErrors,
+    $tokens->validateLoginError((string) $loginErrorToken, $request->host, $now, 30),
+    'login error flash',
+);
+assertSameValue(
+    null,
+    $tokens->validateLoginError((string) $loginErrorToken . 'x', $request->host, $now, 30),
+    'tampered login error flash',
+);
+assertSameValue(
+    null,
+    $tokens->validateLoginError((string) $loginErrorToken, 'other.example.com', $now, 30),
+    'host-bound login error flash',
+);
 
 $wordpressCookie = 'wordpress-session-cookie';
 $assertion = $tokens->issueAuthAssertion($request->host, $wordpressCookie, $now + 600);

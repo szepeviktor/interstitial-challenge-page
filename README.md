@@ -11,6 +11,7 @@ Code invoked from `wp-config.php`:
 
 - builds a framework-independent request;
 - excludes background and non-document requests;
+- requires a valid challenge clearance on configured sensitive pages;
 - runs the injected scoring system;
 - validates clearance and authenticated-session assertions;
 - creates and signs stateless Hashcash challenges;
@@ -23,7 +24,10 @@ The MU plugin:
 
 - issues an authenticated-session assertion after WordPress validates a login;
 - refreshes that assertion on WordPress requests, including Heartbeat;
-- clears the assertion during logout.
+- clears the assertion during logout;
+- expires challenge clearance after a failed WordPress login, so every
+  failed login immediately to a fresh challenge, so every subsequent password
+  guess requires fresh proof.
 
 The MU plugin does not score requests or render challenges.
 
@@ -108,7 +112,7 @@ The default challenge threshold is 50.
 ### Stateless
 
 `NullReplayStore` performs no persistence. Challenges are signed and expire
-after five minutes, but a valid proof can be replayed during that window.
+after 30 seconds, but a valid proof can be replayed during that window.
 
 ### Redis
 
@@ -131,12 +135,21 @@ created by the package.
 define('HASHCASH_INTERSTITIAL_SECRET', 'at-least-32-random-bytes');
 define('HASHCASH_INTERSTITIAL_THRESHOLD', 50);
 define('HASHCASH_INTERSTITIAL_BITS', 20);
-define('HASHCASH_INTERSTITIAL_CHALLENGE_TTL', 300);
+define('HASHCASH_INTERSTITIAL_CHALLENGE_TTL', 30);
 define('HASHCASH_INTERSTITIAL_CLEARANCE_TTL', 900);
 define('HASHCASH_INTERSTITIAL_AUTH_TTL', 600);
 define('HASHCASH_INTERSTITIAL_FAIL_OPEN', true);
 define('HASHCASH_INTERSTITIAL_LOG', '/var/log/hashcash-interstitial/example.com.log');
+define('HASHCASH_INTERSTITIAL_REQUIRED_PATHS', ['/checkout', '/checkout/', '/wp-login.php']);
 ```
+
+`HASHCASH_INTERSTITIAL_REQUIRED_PATHS` defaults to the paths shown above.
+Matching is exact and ignores the query string, so `/checkout-later` is not
+protected. Normal HTML navigations to these paths require a valid, host-bound
+`hc_clearance` cookie regardless of request score or WordPress authentication.
+Direct `POST` requests to `/wp-login.php` also require clearance. Challenge
+proof submissions remain accepted, and WooCommerce `wc-ajax` requests are not
+treated as checkout-page navigations.
 
 `HASHCASH_INTERSTITIAL_LOG` is optional. When it is defined, eligible requests
 scoring from 30 through 49 are appended to that file as newline-delimited JSON.

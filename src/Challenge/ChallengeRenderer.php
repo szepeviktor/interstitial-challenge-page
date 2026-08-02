@@ -22,8 +22,6 @@ final class ChallengeRenderer
                 | JSON_HEX_QUOT,
         );
         $escapedAction = htmlspecialchars($action, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-        $escapedBits = htmlspecialchars((string) $challenge->bits, ENT_QUOTES, 'UTF-8');
-
         $this->headers(429);
         header('HC-Mitigated: challenge');
 
@@ -34,47 +32,55 @@ final class ChallengeRenderer
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
-<title>One more step</title>
+<title>Security check</title>
 <style>
-body{font-family:system-ui,Segoe UI,Arial,sans-serif;margin:0;padding:40px;background:#f7f7f7;color:#111}
-.card{max-width:560px;margin:10vh auto;background:#fff;border:1px solid #ddd;border-radius:8px;padding:24px;box-shadow:0 4px 24px rgba(0,0,0,.08)}
-button{background:#111;color:#fff;border:0;border-radius:6px;padding:10px 14px;font-size:14px;cursor:pointer}
-code{background:#f0f0f0;padding:2px 6px;border-radius:4px}
+*{box-sizing:border-box}
+html{background:#f0f0f1}
+body{min-width:0;margin:0;background:#f0f0f1;color:#3c434a;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Oxygen-Sans,Ubuntu,Cantarell,"Helvetica Neue",sans-serif;font-size:13px;line-height:1.4}
+.login{width:320px;max-width:calc(100% - 40px);margin:auto;padding:5% 0 0}
+.logo{width:84px;height:84px;margin:0 auto 24px;background:url("/wp-admin/images/wordpress-logo-gray.svg") center/84px 84px no-repeat}
+.card{width:320px;max-width:100%;padding:26px 24px;background:#fff;border:1px solid #c3c4c7;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+h1{margin:0 0 16px;color:#1d2327;font-size:20px;font-weight:400;line-height:1.3}
+p{margin:0}
+.status{font-size:14px;line-height:21px}
+.detail{margin-top:16px;color:#50575e;line-height:1.5}
+.spinner{display:inline-block;width:14px;height:14px;margin:0 7px -2px 0;border:2px solid #c3c4c7;border-top-color:#3858e9;border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.spinner{animation-duration:1.6s}}
+@media (max-width:782px){.login{padding-top:20px}}
 </style>
 </head>
 <body>
-<div class="card">
-<h1>One more step</h1>
-<p>We need a quick Hashcash proof-of-work.</p>
-<p>Bits: <code>{$escapedBits}</code></p>
+<main class="login">
+<div class="logo" role="img" aria-label="WordPress"></div>
+<section class="card">
+<h1>Security check</h1>
+<p id="hc_status" class="status" role="status" aria-live="polite"><span class="spinner" aria-hidden="true"></span>Verifying your browser&hellip;</p>
+<p class="detail">This quick check helps protect the site from automated abuse.</p>
 <form id="hc" method="post" action="{$escapedAction}">
 <input type="hidden" name="hc_challenge" value="1">
 <input type="hidden" name="hc_stamp" id="hc_stamp" value="">
-<button type="button" id="hc_btn">Compute &amp; Continue</button>
-<noscript><p>JavaScript is required.</p></noscript>
+<noscript><p>JavaScript is required to complete this security check.</p></noscript>
 </form>
-</div>
+</section>
+</main>
 <script>
 window.HC={$configuration};
 (() => {
     const config = window.HC;
-    const button = document.getElementById('hc_btn');
+    const statusElement = document.getElementById('hc_status');
     const stampElement = document.getElementById('hc_stamp');
     const form = document.getElementById('hc');
-    const toHex = (buffer) => Array.from(new Uint8Array(buffer))
-        .map((value) => value.toString(16).padStart(2, '0')).join('');
-    const sha1 = async (value) => toHex(
-        await crypto.subtle.digest('SHA-1', new TextEncoder().encode(value))
+    const encoder = new TextEncoder();
+    const batchSize = 1024;
+    const sha1 = async (value) => new Uint8Array(
+        await crypto.subtle.digest('SHA-1', encoder.encode(value))
     );
-    const leadingZeroBits = (hex) => {
+    const leadingZeroBits = (digest) => {
         let bits = 0;
-        for (const character of hex) {
-            const nibble = parseInt(character, 16);
-            if (nibble === 0) { bits += 4; continue; }
-            if (nibble >= 8) return bits;
-            if (nibble >= 4) return bits + 1;
-            if (nibble >= 2) return bits + 2;
-            return bits + 3;
+        for (const byte of digest) {
+            if (byte === 0) { bits += 8; continue; }
+            return bits + Math.clz32(byte) - 24;
         }
         return bits;
     };
@@ -92,23 +98,26 @@ window.HC={$configuration};
             + String(date.getUTCMinutes()).padStart(2, '0')
             + String(date.getUTCSeconds()).padStart(2, '0');
     };
-    button.addEventListener('click', async () => {
-        button.disabled = true;
-        button.textContent = 'Working...';
+    const solve = async () => {
         const date = dateStamp();
         const random = randomValue();
-        for (let counter = 0; ; counter += 1) {
-            const encodedCounter = btoa(String(counter)).replace(/=+$/g, '');
-            const stamp = `1:\${config.bits}:\${date}:\${config.resource}:\${config.token}:\${random}:\${encodedCounter}`;
-            if (leadingZeroBits(await sha1(stamp)) >= config.bits) {
-                stampElement.value = stamp;
-                form.submit();
-                return;
-            }
-            if (counter % 200 === 0) {
-                await new Promise((resolve) => setTimeout(resolve, 0));
+        for (let counter = 0; ; counter += batchSize) {
+            const stamps = Array.from({ length: batchSize }, (_, offset) => {
+                const encodedCounter = btoa(String(counter + offset)).replace(/=+$/g, '');
+                return `1:\${config.bits}:\${date}:\${config.resource}:\${config.token}:\${random}:\${encodedCounter}`;
+            });
+            const digests = await Promise.all(stamps.map(sha1));
+            for (let offset = 0; offset < batchSize; offset += 1) {
+                if (leadingZeroBits(digests[offset]) >= config.bits) {
+                    stampElement.value = stamps[offset];
+                    form.submit();
+                    return;
+                }
             }
         }
+    };
+    solve().catch(() => {
+        statusElement.textContent = 'The automatic security check could not run. Please enable JavaScript and reload the page.';
     });
 })();
 </script>
