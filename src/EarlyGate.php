@@ -28,7 +28,7 @@ final class EarlyGate
         ?Scorer $scorer = null,
         ?ReplayStore $replayStore = null,
     ) {
-        $this->scorer = $scorer ?? new DefaultScorer();
+        $this->scorer = $scorer ?? new DefaultScorer($this->config);
         $this->tokenService = new TokenService($this->config->secret);
         $this->challengeService = new ChallengeService(
             $this->config,

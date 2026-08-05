@@ -73,13 +73,19 @@ The default scorer applies these rules:
 - missing `Accept-Language`: +10;
 - oversized `Accept-Language`: +20;
 - inconsistent Fetch Metadata headers: +50;
+- a non-empty `Referer` combined with `Sec-Fetch-Site: none`: +50;
 - incomplete Fetch Metadata when at least one such header is present: +15;
+- at least 10 browser navigation headers emitted in alphabetical order: +30;
+- an unexpected `Connection` value on a direct Chrome HTTP/1.1 navigation:
+  +20;
 - path traversal or common sensitive-file probes: +80.
 
 Missing Fetch Metadata does not score by itself, because older and
 privacy-focused browsers may omit it. The default rules do not challenge based
 on language, country, or a generic bot/crawler substring. Verified search
 engine handling should be implemented separately from user-agent scoring.
+The Chrome HTTP/1.1 connection rule is skipped when a recognized forwarding
+header is present, because proxies may legitimately remove hop-by-hop headers.
 
 For custom scoring, implement `Scorer` and return a score between 0 and 100:
 
@@ -141,6 +147,9 @@ define('HASHCASH_INTERSTITIAL_AUTH_TTL', 600);
 define('HASHCASH_INTERSTITIAL_FAIL_OPEN', true);
 define('HASHCASH_INTERSTITIAL_LOG', '/var/log/hashcash-interstitial/example.com.log');
 define('HASHCASH_INTERSTITIAL_REQUIRED_PATHS', ['/checkout', '/checkout/', '/wp-login.php']);
+define('HASHCASH_INTERSTITIAL_EMERGENCY_RULES', [
+    ['type' => 'path_prefix', 'value' => '/wp-json/', 'score' => 80, 'reason' => 'emergency_wp_json'],
+]);
 ```
 
 `HASHCASH_INTERSTITIAL_REQUIRED_PATHS` defaults to the paths shown above.
@@ -162,6 +171,23 @@ control characters removed and are limited to 2,048 bytes. `Cookie`,
 `Authorization`, challenge stamps, authentication tokens, and unrecognized
 headers are never logged. A log write failure is reported through PHP's error
 log and does not block the request.
+
+`HASHCASH_INTERSTITIAL_EMERGENCY_RULES` is optional. It accepts a list of
+score-only rules that are appended to the default scorer, so matching requests
+receive a challenge when their final score reaches
+`HASHCASH_INTERSTITIAL_THRESHOLD`. Supported rule types:
+
+- `path_exact`, `path_prefix`, `path_contains`, `path_regex`;
+- `method`, with a value such as `POST`;
+- `method_path`, with a value such as `POST /wp-login.php`;
+- `header_missing`, `header_equals`, `header_contains`, `header_regex`;
+- `ip_exact`, `ip_cidr`.
+
+Header rules require `name`; every rule except `header_missing` requires
+`value`. `score` must be an integer from 0 through 100. `reason` is optional
+and defaults to `emergency_` plus the rule type. If the constant contains an
+invalid rule, the whole emergency rule list is ignored and the problem is
+written to PHP's error log.
 
 ## Development
 

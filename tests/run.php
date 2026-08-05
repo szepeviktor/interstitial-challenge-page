@@ -11,6 +11,10 @@ use SzepeViktor\WordPress\Waf\Request;
 use SzepeViktor\WordPress\Waf\RequestDecision;
 use SzepeViktor\WordPress\Waf\RequestPolicy;
 use SzepeViktor\WordPress\Waf\Scoring\DefaultScorer;
+use SzepeViktor\WordPress\Waf\Scoring\Rules\EmergencyRule;
+use SzepeViktor\WordPress\Waf\Scoring\Rules\AlphabeticalBrowserHeadersRule;
+use SzepeViktor\WordPress\Waf\Scoring\Rules\ChromeHttp11ConnectionRule;
+use SzepeViktor\WordPress\Waf\Scoring\Rules\FetchMetadataRule;
 use SzepeViktor\WordPress\Waf\Security\TokenService;
 
 require dirname(__DIR__) . '/vendor/autoload.php';
@@ -119,6 +123,111 @@ assertSameValue(
     'incomplete Fetch Metadata score',
 );
 
+$suspiciousHeaders = [
+    'accept' => 'text/html,application/xhtml+xml',
+    'accept-encoding' => 'gzip, deflate, br, zstd',
+    'accept-language' => 'en-US,en;q=0.9',
+    'cache-control' => 'max-age=0',
+    'host' => 'example.com',
+    'referer' => 'https://example.com/',
+    'sec-ch-ua' => '"Chromium";v="144", "Google Chrome";v="144"',
+    'sec-ch-ua-mobile' => '?0',
+    'sec-ch-ua-platform' => '"macOS"',
+    'sec-fetch-dest' => 'document',
+    'sec-fetch-mode' => 'navigate',
+    'sec-fetch-site' => 'none',
+    'sec-fetch-user' => '?1',
+    'upgrade-insecure-requests' => '1',
+    'user-agent' => 'Mozilla/5.0 Chrome/144.0.0.0 Safari/537.36',
+];
+$suspiciousRequest = new Request(
+    method: 'GET',
+    scheme: 'https',
+    host: 'example.com',
+    target: '/',
+    path: '/',
+    headers: $suspiciousHeaders,
+    cookies: [],
+    post: [],
+    protocol: 'HTTP/1.1',
+);
+
+assertSameValue(
+    30,
+    (new AlphabeticalBrowserHeadersRule())->evaluate($suspiciousRequest)->value,
+    'alphabetical browser headers score',
+);
+assertSameValue(
+    50,
+    (new FetchMetadataRule())->evaluate($suspiciousRequest)->value,
+    'referer contradicts Sec-Fetch-Site none',
+);
+assertSameValue(
+    20,
+    (new ChromeHttp11ConnectionRule())->evaluate($suspiciousRequest)->value,
+    'direct Chrome HTTP/1.1 connection score',
+);
+assertSameValue(
+    100,
+    $defaultScorer->score($suspiciousRequest)->value,
+    'combined forged Chrome score',
+);
+
+$proxiedSuspiciousRequest = new Request(
+    method: $suspiciousRequest->method,
+    scheme: $suspiciousRequest->scheme,
+    host: $suspiciousRequest->host,
+    target: $suspiciousRequest->target,
+    path: $suspiciousRequest->path,
+    headers: array_merge($suspiciousRequest->headers, ['via' => '1.1 proxy.example']),
+    cookies: $suspiciousRequest->cookies,
+    post: $suspiciousRequest->post,
+    protocol: $suspiciousRequest->protocol,
+);
+assertSameValue(
+    0,
+    (new ChromeHttp11ConnectionRule())->evaluate($proxiedSuspiciousRequest)->value,
+    'proxy may remove the HTTP/1.1 Connection header',
+);
+
+$realisticChromeHeaders = [
+    'host' => 'example.com',
+    'connection' => 'keep-alive',
+    'sec-ch-ua' => '"Chromium";v="150", "Google Chrome";v="150"',
+    'sec-ch-ua-mobile' => '?0',
+    'sec-ch-ua-platform' => '"Windows"',
+    'upgrade-insecure-requests' => '1',
+    'user-agent' => 'Mozilla/5.0 Chrome/150.0.0.0 Safari/537.36',
+    'accept' => 'text/html,application/xhtml+xml',
+    'sec-fetch-site' => 'none',
+    'sec-fetch-mode' => 'navigate',
+    'sec-fetch-user' => '?1',
+    'sec-fetch-dest' => 'document',
+    'accept-encoding' => 'gzip, deflate, br, zstd',
+    'accept-language' => 'en-US,en;q=0.9',
+];
+$realisticChromeRequest = new Request(
+    method: 'GET',
+    scheme: 'https',
+    host: 'example.com',
+    target: '/',
+    path: '/',
+    headers: $realisticChromeHeaders,
+    cookies: [],
+    post: [],
+    protocol: 'HTTP/1.1',
+);
+assertSameValue(
+    0,
+    (new AlphabeticalBrowserHeadersRule())->evaluate($realisticChromeRequest)->value,
+    'realistic Chrome header order',
+);
+assertSameValue(
+    0,
+    (new ChromeHttp11ConnectionRule())->evaluate($realisticChromeRequest)->value,
+    'realistic Chrome HTTP/1.1 connection',
+);
+
 $sensitivePathRequest = new Request(
     method: $request->method,
     scheme: $request->scheme,
@@ -158,6 +267,68 @@ assertSameValue(
     $defaultScorer->score($doubleEncodedTraversalRequest)->value,
     'double-encoded path traversal score',
 );
+
+$emergencyRequest = new Request(
+    method: 'POST',
+    scheme: 'https',
+    host: 'example.com',
+    target: '/wp-json/wp/v2/users?context=edit',
+    path: '/wp-json/wp/v2/users',
+    headers: [
+        'accept' => 'text/html',
+        'accept-language' => 'en-US,en;q=0.9',
+        'host' => 'example.com',
+        'user-agent' => 'Mozilla/5.0',
+        'x-attack' => 'ProbeRunner',
+    ],
+    cookies: [],
+    post: [],
+    protocol: 'HTTP/1.1',
+    clientIp: '203.0.113.42',
+);
+$emergencyRule = new EmergencyRule([
+    ['type' => 'path_exact', 'value' => '/wp-json/wp/v2/users', 'score' => 10, 'reason' => 'emergency_path_exact'],
+    ['type' => 'path_prefix', 'value' => '/wp-json/', 'score' => 10, 'reason' => 'emergency_path_prefix'],
+    ['type' => 'path_contains', 'value' => '/v2/', 'score' => 10, 'reason' => 'emergency_path_contains'],
+    ['type' => 'path_regex', 'value' => '~^/wp-json/.*/users$~', 'score' => 10, 'reason' => 'emergency_path_regex'],
+    ['type' => 'method', 'value' => 'POST', 'score' => 10, 'reason' => 'emergency_method'],
+    ['type' => 'method_path', 'value' => 'POST /wp-json/wp/v2/users', 'score' => 10, 'reason' => 'emergency_method_path'],
+    ['type' => 'header_missing', 'name' => 'x-missing', 'score' => 10, 'reason' => 'emergency_header_missing'],
+    ['type' => 'header_equals', 'name' => 'x-attack', 'value' => 'ProbeRunner', 'score' => 10, 'reason' => 'emergency_header_equals'],
+    ['type' => 'header_contains', 'name' => 'x-attack', 'value' => 'runner', 'score' => 10, 'reason' => 'emergency_header_contains'],
+    ['type' => 'header_regex', 'name' => 'x-attack', 'value' => '~ProbeRunn(er)$~', 'score' => 10, 'reason' => 'emergency_header_regex'],
+    ['type' => 'ip_exact', 'value' => '203.0.113.42', 'score' => 10, 'reason' => 'emergency_ip_exact'],
+    ['type' => 'ip_cidr', 'value' => '203.0.113.0/24', 'score' => 10, 'reason' => 'emergency_ip_cidr'],
+]);
+assertSameValue(100, $emergencyRule->evaluate($emergencyRequest)->value, 'emergency rule score is capped');
+assertSameValue(
+    60,
+    (new DefaultScorer(new Config(
+        secret: str_repeat('s', 32),
+        emergencyRules: [
+            ['type' => 'path_prefix', 'value' => '/wp-json/', 'score' => 60, 'reason' => 'emergency_wp_json'],
+        ],
+    )))->score($emergencyRequest)->value,
+    'default scorer includes configured emergency rules',
+);
+assertSameValue(
+    0,
+    (new EmergencyRule([
+        ['type' => 'ip_cidr', 'value' => '2001:db8::/32', 'score' => 100, 'reason' => 'emergency_ipv6_cidr'],
+    ]))->evaluate($emergencyRequest)->value,
+    'IPv4 request does not match IPv6 emergency CIDR',
+);
+
+try {
+    new Config(
+        secret: str_repeat('s', 32),
+        emergencyRules: [
+            ['type' => 'path_regex', 'value' => '(', 'score' => 100],
+        ],
+    );
+    throw new RuntimeException('Invalid emergency regex was accepted.');
+} catch (InvalidArgumentException) {
+}
 
 $requestFor = static function (
     string $path,

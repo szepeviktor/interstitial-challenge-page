@@ -20,6 +20,8 @@ final class Request
         public readonly array $headers,
         public readonly array $cookies,
         public readonly array $post,
+        public readonly string $protocol = '',
+        public readonly string $clientIp = '',
     ) {
     }
 
@@ -42,6 +44,8 @@ final class Request
             headers: self::extractHeaders($server),
             cookies: self::stringValues($cookies),
             post: $post,
+            protocol: strtoupper((string) ($server['SERVER_PROTOCOL'] ?? '')),
+            clientIp: (string) ($server['REMOTE_ADDR'] ?? ''),
         );
     }
 

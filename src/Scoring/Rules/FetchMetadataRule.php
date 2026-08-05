@@ -12,6 +12,7 @@ final class FetchMetadataRule implements ScoringRule
 {
     public const INCONSISTENT_SCORE = 50;
     public const INCOMPLETE_SCORE = 15;
+    public const IMPOSSIBLE_NAVIGATION_CONTEXT_SCORE = 50;
 
     public function evaluate(Request $request): Score
     {
@@ -31,6 +32,13 @@ final class FetchMetadataRule implements ScoringRule
             || ($user !== '' && $user !== '?1')
         ) {
             return new Score(self::INCONSISTENT_SCORE, ['fetch_metadata_inconsistent']);
+        }
+
+        if ($site === 'none' && trim($request->header('referer')) !== '') {
+            return new Score(
+                self::IMPOSSIBLE_NAVIGATION_CONTEXT_SCORE,
+                ['fetch_metadata_none_with_referer'],
+            );
         }
 
         if ($destination === '' || $mode === '' || $site === '') {

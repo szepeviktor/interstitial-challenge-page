@@ -14,7 +14,13 @@ final class Config
     public readonly array $requiredClearancePaths;
 
     /**
+     * @var list<array{type: string, score: int, reason: string, value?: string, name?: string}>
+     */
+    public readonly array $emergencyRules;
+
+    /**
      * @param list<mixed> $requiredClearancePaths
+     * @param list<mixed> $emergencyRules
      */
     public function __construct(
         public readonly string $secret,
@@ -32,6 +38,7 @@ final class Config
             '/checkout/',
             '/wp-login.php',
         ],
+        array $emergencyRules = [],
     ) {
         if (strlen($this->secret) < 32) {
             throw new InvalidArgumentException('The WAF secret must contain at least 32 bytes.');
@@ -75,6 +82,7 @@ final class Config
         }
 
         $this->requiredClearancePaths = $validatedPaths;
+        $this->emergencyRules = self::validateEmergencyRules($emergencyRules);
     }
 
     public static function fromConstants(): self
@@ -94,7 +102,162 @@ final class Config
                 'HASHCASH_INTERSTITIAL_REQUIRED_PATHS',
                 ['/checkout', '/checkout/', '/wp-login.php'],
             ),
+            emergencyRules: self::constantEmergencyRules(),
         );
+    }
+
+    /**
+     * @param list<mixed> $rules
+     *
+     * @return list<array{type: string, score: int, reason: string, value?: string, name?: string}>
+     */
+    private static function validateEmergencyRules(array $rules): array
+    {
+        $validated = [];
+
+        foreach ($rules as $index => $rule) {
+            if (!is_array($rule)) {
+                throw new InvalidArgumentException('Emergency rule #' . $index . ' must be an array.');
+            }
+
+            $type = $rule['type'] ?? null;
+            if (!is_string($type) || $type === '') {
+                throw new InvalidArgumentException('Emergency rule #' . $index . ' must define a type.');
+            }
+
+            $score = $rule['score'] ?? null;
+            if (!is_int($score) || $score < 0 || $score > 100) {
+                throw new InvalidArgumentException('Emergency rule #' . $index . ' score must be an integer from 0 to 100.');
+            }
+
+            $reason = $rule['reason'] ?? 'emergency_' . $type;
+            if (!is_string($reason) || $reason === '') {
+                throw new InvalidArgumentException('Emergency rule #' . $index . ' reason must be a non-empty string.');
+            }
+
+            $normalized = [
+                'type' => $type,
+                'score' => $score,
+                'reason' => $reason,
+            ];
+
+            if (in_array($type, ['header_missing', 'header_equals', 'header_contains', 'header_regex'], true)) {
+                $name = $rule['name'] ?? null;
+                if (!is_string($name) || !preg_match('/^[a-z0-9][a-z0-9_-]*$/i', $name)) {
+                    throw new InvalidArgumentException('Emergency rule #' . $index . ' header name is invalid.');
+                }
+
+                $normalized['name'] = strtolower(str_replace('_', '-', $name));
+            }
+
+            if ($type !== 'header_missing') {
+                $value = $rule['value'] ?? null;
+                if (!is_string($value) || $value === '') {
+                    throw new InvalidArgumentException('Emergency rule #' . $index . ' value must be a non-empty string.');
+                }
+
+                $normalized['value'] = $type === 'method' ? strtoupper($value) : $value;
+            }
+
+            self::validateEmergencyRuleValue($index, $normalized);
+            $validated[] = $normalized;
+        }
+
+        return $validated;
+    }
+
+    /**
+     * @param array{type: string, score: int, reason: string, value?: string, name?: string} $rule
+     */
+    private static function validateEmergencyRuleValue(int $index, array $rule): void
+    {
+        $type = $rule['type'];
+        $value = $rule['value'] ?? '';
+
+        if (!in_array($type, [
+            'path_exact',
+            'path_prefix',
+            'path_contains',
+            'path_regex',
+            'method',
+            'method_path',
+            'header_missing',
+            'header_equals',
+            'header_contains',
+            'header_regex',
+            'ip_exact',
+            'ip_cidr',
+        ], true)) {
+            throw new InvalidArgumentException('Emergency rule #' . $index . ' has an unsupported type.');
+        }
+
+        if (in_array($type, ['path_exact', 'path_prefix'], true) && $value[0] !== '/') {
+            throw new InvalidArgumentException('Emergency rule #' . $index . ' path value must start with /.');
+        }
+
+        if ($type === 'path_regex' || $type === 'header_regex') {
+            if (@preg_match($value, '') === false) {
+                throw new InvalidArgumentException('Emergency rule #' . $index . ' regex is invalid.');
+            }
+        }
+
+        if ($type === 'method' && !preg_match('/^[A-Z]+$/', $value)) {
+            throw new InvalidArgumentException('Emergency rule #' . $index . ' method value is invalid.');
+        }
+
+        if ($type === 'method_path' && !preg_match('/^[A-Z]+ \//', $value)) {
+            throw new InvalidArgumentException('Emergency rule #' . $index . ' method_path value must look like "POST /path".');
+        }
+
+        if ($type === 'ip_exact' && filter_var($value, FILTER_VALIDATE_IP) === false) {
+            throw new InvalidArgumentException('Emergency rule #' . $index . ' IP address is invalid.');
+        }
+
+        if ($type === 'ip_cidr') {
+            if (!preg_match('~^([^/]+)/(\d{1,3})$~', $value, $matches)) {
+                throw new InvalidArgumentException('Emergency rule #' . $index . ' CIDR range is invalid.');
+            }
+
+            $packed = @inet_pton($matches[1]);
+            if ($packed === false) {
+                throw new InvalidArgumentException('Emergency rule #' . $index . ' CIDR range is invalid.');
+            }
+
+            $bits = (int) $matches[2];
+            if ($bits < 0 || $bits > strlen($packed) * 8) {
+                throw new InvalidArgumentException('Emergency rule #' . $index . ' CIDR range is invalid.');
+            }
+        }
+    }
+
+    /**
+     * @return list<mixed>
+     */
+    private static function constantArray(string $name): array
+    {
+        if (!defined($name)) {
+            return [];
+        }
+
+        $value = constant($name);
+        if (!is_array($value)) {
+            throw new InvalidArgumentException($name . ' must be an array.');
+        }
+
+        return array_values($value);
+    }
+
+    /**
+     * @return list<array{type: string, score: int, reason: string, value?: string, name?: string}>
+     */
+    private static function constantEmergencyRules(): array
+    {
+        try {
+            return self::validateEmergencyRules(self::constantArray('HASHCASH_INTERSTITIAL_EMERGENCY_RULES'));
+        } catch (InvalidArgumentException $exception) {
+            error_log('WordPress WAF emergency rules ignored: ' . $exception->getMessage());
+            return [];
+        }
     }
 
     private static function constantString(string $name): ?string
