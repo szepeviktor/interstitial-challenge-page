@@ -70,22 +70,6 @@ final class Request
     }
 
     /**
-     * @return list<string>
-     */
-    public function wordpressLoginCookies(): array
-    {
-        $values = [];
-
-        foreach ($this->cookies as $name => $value) {
-            if (str_starts_with($name, 'wordpress_logged_in_')) {
-                $values[] = $value;
-            }
-        }
-
-        return $values;
-    }
-
-    /**
      * @param array<string, mixed> $server
      *
      * @return array<string, string>

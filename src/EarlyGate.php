@@ -97,19 +97,6 @@ final class EarlyGate
             $this->sendChallenge($request, $now);
         }
 
-        if ($this->hasValidAuthAssertion($request, $now)) {
-            return;
-        }
-
-        if (isset($request->cookies[$this->config->authCookie])) {
-            $this->setCookie(
-                name: $this->config->authCookie,
-                value: '',
-                expires: $now - 3600,
-                secure: $request->scheme === 'https',
-            );
-        }
-
         $score = $this->scorer->score($request);
         $this->requestHeaderLogger->log($request, $score);
         if ($score->value < $this->config->challengeThreshold) {
@@ -147,19 +134,6 @@ final class EarlyGate
             host: $request->host,
             now: $now,
             maximumTtl: $this->config->clearanceTtl,
-        );
-    }
-
-    private function hasValidAuthAssertion(Request $request, int $now): bool
-    {
-        $token = $request->cookies[$this->config->authCookie] ?? '';
-
-        return $this->tokenService->validateAuthAssertion(
-            token: $token,
-            host: $request->host,
-            wordpressCookies: $request->wordpressLoginCookies(),
-            now: $now,
-            maximumTtl: $this->config->authAssertionTtl,
         );
     }
 

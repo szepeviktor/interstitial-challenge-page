@@ -28,9 +28,7 @@ final class Config
         public readonly int $bits = 20,
         public readonly int $challengeTtl = 30,
         public readonly int $clearanceTtl = 900,
-        public readonly int $authAssertionTtl = 600,
         public readonly string $clearanceCookie = 'hc_clearance',
-        public readonly string $authCookie = 'hc_wp_auth',
         public readonly bool $failOpen = true,
         public readonly ?string $logPath = null,
         array $requiredClearancePaths = [
@@ -52,7 +50,7 @@ final class Config
             throw new InvalidArgumentException('Hashcash difficulty must be between 1 and 30 bits.');
         }
 
-        if ($this->challengeTtl < 1 || $this->clearanceTtl < 1 || $this->authAssertionTtl < 1) {
+        if ($this->challengeTtl < 1 || $this->clearanceTtl < 1) {
             throw new InvalidArgumentException('Token lifetimes must be positive.');
         }
 
@@ -95,7 +93,6 @@ final class Config
             bits: self::constantInt('HASHCASH_INTERSTITIAL_BITS', 20),
             challengeTtl: self::constantInt('HASHCASH_INTERSTITIAL_CHALLENGE_TTL', 30),
             clearanceTtl: self::constantInt('HASHCASH_INTERSTITIAL_CLEARANCE_TTL', 900),
-            authAssertionTtl: self::constantInt('HASHCASH_INTERSTITIAL_AUTH_TTL', 600),
             failOpen: self::constantBool('HASHCASH_INTERSTITIAL_FAIL_OPEN', true),
             logPath: self::constantString('HASHCASH_INTERSTITIAL_LOG'),
             requiredClearancePaths: self::constantStringList(

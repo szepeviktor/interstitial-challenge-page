@@ -400,36 +400,6 @@ $clearance = $tokens->issueClearance($request->host, $now + 900);
 assertSameValue(true, $tokens->validateClearance($clearance, $request->host, $now, 900), 'clearance');
 assertSameValue(false, $tokens->validateClearance($clearance . 'x', $request->host, $now, 900), 'tampered clearance');
 
-$loginErrors = [
-    'incorrect_password' => [
-        '<strong>Error:</strong> The password entered for this account is incorrect.',
-    ],
-];
-$loginErrorToken = $tokens->issueLoginError($request->host, $loginErrors, $now + 30);
-assertSameValue(
-    $loginErrors,
-    $tokens->validateLoginError((string) $loginErrorToken, $request->host, $now, 30),
-    'login error flash',
-);
-assertSameValue(
-    null,
-    $tokens->validateLoginError((string) $loginErrorToken . 'x', $request->host, $now, 30),
-    'tampered login error flash',
-);
-assertSameValue(
-    null,
-    $tokens->validateLoginError((string) $loginErrorToken, 'other.example.com', $now, 30),
-    'host-bound login error flash',
-);
-
-$wordpressCookie = 'wordpress-session-cookie';
-$assertion = $tokens->issueAuthAssertion($request->host, $wordpressCookie, $now + 600);
-assertSameValue(
-    true,
-    $tokens->validateAuthAssertion($assertion, $request->host, [$wordpressCookie], $now, 600),
-    'auth assertion',
-);
-
 $makeStamp = static function (ChallengeService $service) use ($request, $now): string {
     $challenge = $service->create($request, $now);
     $date = gmdate('ymdHis', $now);

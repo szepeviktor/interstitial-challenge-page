@@ -1,7 +1,6 @@
 # WordPress Hashcash WAF
 
-A Composer package that scores and challenges requests before WordPress boots,
-with a small MU-plugin integration for authenticated WordPress sessions.
+A Composer package that scores and challenges requests before WordPress boots.
 
 All PHP classes use the `SzepeViktor\WordPress\Waf` namespace.
 
@@ -13,23 +12,12 @@ Code invoked from `wp-config.php`:
 - excludes background and non-document requests;
 - requires a valid challenge clearance on configured sensitive pages;
 - runs the injected scoring system;
-- validates clearance and authenticated-session assertions;
+- validates clearance cookies;
 - creates and signs stateless Hashcash challenges;
 - renders the interstitial page;
 - receives and verifies challenge POST requests;
 - optionally claims completed proofs in Redis;
 - issues signed clearance cookies.
-
-The MU plugin:
-
-- issues an authenticated-session assertion after WordPress validates a login;
-- refreshes that assertion on WordPress requests, including Heartbeat;
-- clears the assertion during logout;
-- expires challenge clearance after a failed WordPress login, so every
-  failed login immediately to a fresh challenge, so every subsequent password
-  guess requires fresh proof.
-
-The MU plugin does not score requests or render challenges.
 
 ## Installation
 
@@ -52,15 +40,11 @@ define('HASHCASH_INTERSTITIAL_SECRET', 'at-least-32-random-bytes');
 ))->run();
 ```
 
-Copy `examples/hashcash-interstitial-mu.php` into the top level of
-`wp-content/mu-plugins/`.
-
 `HASHCASH_INTERSTITIAL_SECRET` is required and must contain at least 32 bytes.
 WordPress authentication salts are never used as WAF signing keys. The same
-dedicated secret signs challenges, clearance cookies, and the authenticated
-session assertion issued by the MU plugin.
+dedicated secret signs challenges and clearance cookies.
 
-Both WAF cookies are host-only. The package does not read WordPress's
+The WAF cookie is host-only. The package does not read WordPress's
 `COOKIE_DOMAIN` constant.
 
 ## Scoring
@@ -143,7 +127,6 @@ define('HASHCASH_INTERSTITIAL_THRESHOLD', 50);
 define('HASHCASH_INTERSTITIAL_BITS', 20);
 define('HASHCASH_INTERSTITIAL_CHALLENGE_TTL', 30);
 define('HASHCASH_INTERSTITIAL_CLEARANCE_TTL', 900);
-define('HASHCASH_INTERSTITIAL_AUTH_TTL', 600);
 define('HASHCASH_INTERSTITIAL_FAIL_OPEN', true);
 define('HASHCASH_INTERSTITIAL_LOG', '/var/log/hashcash-interstitial/example.com.log');
 define('HASHCASH_INTERSTITIAL_REQUIRED_PATHS', ['/checkout', '/checkout/', '/wp-login.php']);
@@ -252,8 +235,7 @@ submission, exact resource/scheme/authority/query binding, malformed and
 tampered stamps, hostile-target escaping and local redirect confinement,
 clearance-cookie tampering, Redis TTL, sequential and concurrent replay
 rejection, fail-open/fail-closed behavior, replay-store recovery without
-exception leakage, the browser WebCrypto flow, split or tampered
-authentication cookie sets, and WordPress login/logout assertions.
+exception leakage, and the browser WebCrypto flow.
 
 The suite also performs a mutation sub-run with `NullReplayStore` deliberately
 substituted for Redis. It requires both sequential and concurrent replay
@@ -263,5 +245,5 @@ accidental downgrade to stateless replay handling.
 ## Cloudflare caching
 
 This package only sees requests that reach the origin. A Cloudflare full-page
-cache hit bypasses both `wp-config.php` and the MU plugin. Enforce challenges
-at the Cloudflare edge when every cached page view must be evaluated.
+cache hit bypasses `wp-config.php`. Enforce challenges at the Cloudflare edge
+when every cached page view must be evaluated.
