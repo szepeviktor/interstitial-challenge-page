@@ -182,6 +182,7 @@ final class Config
             'header_equals',
             'header_contains',
             'header_regex',
+            'header_names_equals',
             'ip_exact',
             'ip_cidr',
         ], true)) {

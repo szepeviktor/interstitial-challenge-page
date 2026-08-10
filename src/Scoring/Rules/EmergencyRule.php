@@ -52,10 +52,16 @@ final class EmergencyRule implements ScoringRule
             'header_equals' => $request->header((string) $rule['name']) === $value,
             'header_contains' => stripos($request->header((string) $rule['name']), $value) !== false,
             'header_regex' => preg_match($value, $request->header((string) $rule['name'])) === 1,
+            'header_names_equals' => $this->headerNames($request) === $value,
             'ip_exact' => $this->sameIp($request->clientIp, $value),
             'ip_cidr' => $this->ipInCidr($request->clientIp, $value),
             default => false,
         };
+    }
+
+    private function headerNames(Request $request): string
+    {
+        return implode(',', array_map('strtolower', array_keys($request->headers)));
     }
 
     private function sameIp(string $ip, string $expected): bool

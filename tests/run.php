@@ -297,6 +297,7 @@ $emergencyRule = new EmergencyRule([
     ['type' => 'header_equals', 'name' => 'x-attack', 'value' => 'ProbeRunner', 'score' => 10, 'reason' => 'emergency_header_equals'],
     ['type' => 'header_contains', 'name' => 'x-attack', 'value' => 'runner', 'score' => 10, 'reason' => 'emergency_header_contains'],
     ['type' => 'header_regex', 'name' => 'x-attack', 'value' => '~ProbeRunn(er)$~', 'score' => 10, 'reason' => 'emergency_header_regex'],
+    ['type' => 'header_names_equals', 'value' => 'accept,accept-language,host,user-agent,x-attack', 'score' => 10, 'reason' => 'emergency_header_names_equals'],
     ['type' => 'ip_exact', 'value' => '203.0.113.42', 'score' => 10, 'reason' => 'emergency_ip_exact'],
     ['type' => 'ip_cidr', 'value' => '203.0.113.0/24', 'score' => 10, 'reason' => 'emergency_ip_cidr'],
 ]);

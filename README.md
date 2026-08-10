@@ -164,6 +164,7 @@ receive a challenge when their final score reaches
 - `method`, with a value such as `POST`;
 - `method_path`, with a value such as `POST /wp-login.php`;
 - `header_missing`, `header_equals`, `header_contains`, `header_regex`;
+- `header_names_equals`;
 - `ip_exact`, `ip_cidr`.
 
 Header rules require `name`; every rule except `header_missing` requires
